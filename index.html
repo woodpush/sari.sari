@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1E5E4E">
+  <meta name="description" content="Inventory, sales and profit tracker for a sari-sari store. Works offline.">
+  <title>Tindahan</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="storeName">Tindahan</h1>
+    <span class="today" id="todayLabel"></span>
+  </header>
+
+  <main>
+    <!-- SELL -->
+    <section class="view" id="view-sell" data-title="Sell">
+      <div class="scanrow">
+        <input id="sellScan" class="scaninput" type="text" inputmode="search" autocomplete="off"
+               placeholder="Scan barcode or type item name" aria-label="Scan barcode or type item name">
+        <button class="btn icon" data-camera="sellScan" aria-label="Scan with camera">📷</button>
+      </div>
+      <ul class="suggest" id="sellSuggest" hidden></ul>
+
+      <div class="sign" aria-live="polite">
+        <span class="sign-label">Total</span>
+        <span class="sign-amount" id="cartTotal">₱0.00</span>
+        <span class="sign-sub" id="cartCount">No items yet</span>
+      </div>
+
+      <ul class="cart" id="cart"></ul>
+
+      <div class="checkout" id="checkout" hidden>
+        <label class="field">
+          <span>Cash received</span>
+          <input id="cashIn" type="text" inputmode="decimal" placeholder="0.00">
+        </label>
+        <div class="quickcash" id="quickCash"></div>
+        <p class="change" id="changeOut"></p>
+        <div class="actions">
+          <button class="btn ghost" id="clearCart">Clear</button>
+          <button class="btn primary" id="completeSale">Complete sale</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ITEMS -->
+    <section class="view" id="view-items" data-title="Items" hidden>
+      <div class="scanrow">
+        <input id="itemSearch" class="scaninput" type="search" autocomplete="off"
+               placeholder="Search or scan an item" aria-label="Search items">
+        <button class="btn icon" data-camera="itemSearch" aria-label="Scan with camera">📷</button>
+      </div>
+      <div class="listhead">
+        <span id="itemCount"></span>
+        <button class="btn primary small" id="addItem">Add item</button>
+      </div>
+      <ul class="list" id="itemList"></ul>
+    </section>
+
+    <!-- RESTOCK -->
+    <section class="view" id="view-restock" data-title="Restock" hidden>
+      <p class="hint">Scan or search the item you bought, then enter how many pieces and what you paid per piece.</p>
+      <div class="scanrow">
+        <input id="restockScan" class="scaninput" type="text" inputmode="search" autocomplete="off"
+               placeholder="Scan barcode or type item name" aria-label="Find item to restock">
+        <button class="btn icon" data-camera="restockScan" aria-label="Scan with camera">📷</button>
+      </div>
+      <ul class="suggest" id="restockSuggest" hidden></ul>
+      <form class="panel" id="restockForm" hidden>
+        <h2 id="restockName"></h2>
+        <p class="muted" id="restockInfo"></p>
+        <label class="field"><span>Pieces added</span>
+          <input id="rsQty" type="number" inputmode="numeric" min="1" step="1" required></label>
+        <label class="field"><span>Buy price per piece (₱)</span>
+          <input id="rsBuy" type="text" inputmode="decimal" required></label>
+        <label class="field"><span>Sell price per piece (₱)</span>
+          <input id="rsSell" type="text" inputmode="decimal" required></label>
+        <p class="calc" id="rsCalc"></p>
+        <div class="actions">
+          <button type="button" class="btn ghost" id="rsCancel">Cancel</button>
+          <button type="submit" class="btn primary">Add to stock</button>
+        </div>
+      </form>
+      <h3 class="subhead">Recent restocks</h3>
+      <ul class="list compact" id="restockLog"></ul>
+    </section>
+
+    <!-- REPORTS -->
+    <section class="view" id="view-reports" data-title="Reports" hidden>
+      <div class="segmented" role="tablist" id="periodTabs">
+        <button data-period="today" aria-selected="true">Today</button>
+        <button data-period="week">7 days</button>
+        <button data-period="month">Month</button>
+        <button data-period="all">All time</button>
+      </div>
+      <div class="ledger" id="ledger"></div>
+      <h3 class="subhead">Best earners</h3>
+      <ul class="list compact" id="topItems"></ul>
+      <h3 class="subhead">Running low</h3>
+      <ul class="list compact" id="lowStock"></ul>
+      <h3 class="subhead">Stock on hand</h3>
+      <div class="ledger" id="stockValue"></div>
+      <h3 class="subhead">Sales in this period</h3>
+      <ul class="list compact" id="saleLog"></ul>
+    </section>
+
+    <!-- MORE -->
+    <section class="view" id="view-more" data-title="More" hidden>
+      <form class="panel" id="settingsForm">
+        <h2>Store</h2>
+        <label class="field"><span>Store name</span><input id="setName" type="text" maxlength="40"></label>
+        <label class="field"><span>Warn when stock is at or below</span>
+          <input id="setLow" type="number" min="0" step="1"></label>
+        <div class="actions"><button class="btn primary" type="submit">Save settings</button></div>
+      </form>
+      <div class="panel">
+        <h2>Backup</h2>
+        <p class="muted">Your data is saved only in this browser on this device. Download a backup often and keep it somewhere safe, like Google Drive.</p>
+        <div class="stack">
+          <button class="btn" id="exportJson">Download backup</button>
+          <label class="btn file">Restore from backup<input type="file" id="importJson" accept="application/json,.json" hidden></label>
+          <button class="btn" id="exportItemsCsv">Export items (CSV)</button>
+          <button class="btn" id="exportSalesCsv">Export sales (CSV)</button>
+          <label class="btn file">Import items from CSV<input type="file" id="importCsv" accept=".csv,text/csv" hidden></label>
+        </div>
+        <p class="muted small">CSV import columns: barcode, name, category, buy_price, sell_price, stock. Existing barcodes are updated; new ones are added.</p>
+      </div>
+      <p class="muted small center">Tindahan · open source · <span id="appVersion"></span></p>
+    </section>
+  </main>
+
+  <nav class="tabs" aria-label="Main">
+    <button data-view="sell" aria-current="page"><span aria-hidden="true">🛒</span>Sell</button>
+    <button data-view="items"><span aria-hidden="true">📦</span>Items</button>
+    <button data-view="restock"><span aria-hidden="true">➕</span>Restock</button>
+    <button data-view="reports"><span aria-hidden="true">📈</span>Reports</button>
+    <button data-view="more"><span aria-hidden="true">⚙️</span>More</button>
+  </nav>
+
+  <!-- Item editor -->
+  <dialog id="itemDialog">
+    <form method="dialog" id="itemForm" class="sheet">
+      <h2 id="itemFormTitle">Add item</h2>
+      <input type="hidden" id="fId">
+      <label class="field"><span>Barcode</span>
+        <div class="scanrow tight">
+          <input id="fBarcode" type="text" inputmode="numeric" autocomplete="off" placeholder="Leave blank if none">
+          <button type="button" class="btn icon" data-camera="fBarcode" aria-label="Scan with camera">📷</button>
+        </div>
+      </label>
+      <label class="field"><span>Item name</span>
+        <input id="fName" type="text" required maxlength="80" placeholder="e.g. Lucky Me Pancit Canton Original"></label>
+      <label class="field"><span>Category</span>
+        <input id="fCategory" type="text" list="categoryList" maxlength="40" placeholder="e.g. Noodles"></label>
+      <datalist id="categoryList"></datalist>
+      <div class="grid2">
+        <label class="field"><span>Buy price (₱)</span><input id="fBuy" type="text" inputmode="decimal" required></label>
+        <label class="field"><span>Sell price (₱)</span><input id="fSell" type="text" inputmode="decimal" required></label>
+      </div>
+      <p class="calc" id="fCalc"></p>
+      <div class="grid2">
+        <label class="field"><span>Pieces in stock</span><input id="fStock" type="number" step="1" value="0"></label>
+        <label class="field"><span>Low stock warning</span><input id="fLow" type="number" min="0" step="1" placeholder="Use store default"></label>
+      </div>
+      <p class="error" id="fError" role="alert"></p>
+      <div class="actions">
+        <button type="button" class="btn danger ghost" id="fDelete" hidden>Delete</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="fCancel">Cancel</button>
+        <button type="submit" class="btn primary" id="fSave">Save item</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Camera scanner -->
+  <dialog id="camDialog">
+    <div class="sheet">
+      <h2>Point the camera at the barcode</h2>
+      <div id="camReader"></div>
+      <p class="error" id="camError"></p>
+      <div class="actions"><button type="button" class="btn ghost" id="camClose">Close</button></div>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="vendor/html5-qrcode.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
