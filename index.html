@@ -20,6 +20,7 @@
   <main>
     <!-- SELL -->
     <section class="view" id="view-sell" data-title="Sell">
+      <button type="button" class="banner" id="backupBanner" hidden></button>
       <div class="scanrow">
         <input id="sellScan" class="scaninput" type="text" inputmode="search" autocomplete="off"
                placeholder="Scan barcode or type item name" aria-label="Scan barcode or type item name">
@@ -120,11 +121,43 @@
         <div class="actions"><button class="btn primary" type="submit">Save settings</button></div>
       </form>
       <div class="panel">
-        <h2>Backup</h2>
-        <p class="muted">Your data is saved only in this browser on this device. Download a backup often and keep it somewhere safe, like Google Drive.</p>
+        <h2>Backup on this phone</h2>
+        <p class="muted">Your data lives inside this browser. Save a copy to the phone's files, or share it to Google Drive, email or Messenger.</p>
+        <p class="status" id="localStatus"></p>
         <div class="stack">
-          <button class="btn" id="exportJson">Download backup</button>
-          <label class="btn file">Restore from backup<input type="file" id="importJson" accept="application/json,.json" hidden></label>
+          <button class="btn primary" id="shareJson" hidden>Share backup (Drive, email…)</button>
+          <button class="btn" id="exportJson">Save backup to phone</button>
+          <label class="btn file">Restore from a backup file<input type="file" id="importJson" accept="application/json,.json" hidden></label>
+        </div>
+      </div>
+
+      <form class="panel" id="cloudForm">
+        <h2>Cloud backup (GitHub)</h2>
+        <p class="muted">Backs up automatically to a <b>private</b> GitHub repository. Every backup is kept in the repository's history, so even a deleted backup can be recovered.</p>
+        <label class="field"><span>Private repository (owner/name)</span>
+          <input id="ghRepo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="woodpush/sari-sari-backup"></label>
+        <label class="field"><span>Access token</span>
+          <input id="ghToken" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…"></label>
+        <label class="field"><span>Back up automatically</span>
+          <select id="ghEvery">
+            <option value="0">Off (only when I tap Back up now)</option>
+            <option value="30">Every 30 minutes, when something changed</option>
+            <option value="60">Every hour, when something changed</option>
+            <option value="240">Every 4 hours, when something changed</option>
+            <option value="1440">Once a day, when something changed</option>
+          </select></label>
+        <p class="status" id="cloudStatus"></p>
+        <div class="actions">
+          <button type="submit" class="btn">Save and test</button>
+          <button type="button" class="btn primary" id="cloudNow">Back up now</button>
+        </div>
+        <button type="button" class="btn ghost" id="cloudRestore">Restore from cloud…</button>
+        <p class="muted small">The token is stored only on this phone and is never included in backup files.</p>
+      </form>
+
+      <div class="panel">
+        <h2>Spreadsheets</h2>
+        <div class="stack">
           <button class="btn" id="exportItemsCsv">Export items (CSV)</button>
           <button class="btn" id="exportSalesCsv">Export sales (CSV)</button>
           <label class="btn file">Import items from CSV<input type="file" id="importCsv" accept=".csv,text/csv" hidden></label>
@@ -176,6 +209,16 @@
         <button type="submit" class="btn primary" id="fSave">Save item</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- Cloud restore -->
+  <dialog id="restoreDialog">
+    <div class="sheet">
+      <h2>Restore from cloud</h2>
+      <p class="muted">Pick a backup. This replaces everything on this phone with that copy.</p>
+      <ul class="list compact" id="restoreList"><li class="empty">Loading backups…</li></ul>
+      <div class="actions"><button type="button" class="btn ghost" id="restoreClose">Close</button></div>
+    </div>
   </dialog>
 
   <!-- Camera scanner -->

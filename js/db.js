@@ -197,12 +197,18 @@ export async function setSetting(key, value) {
 
 /* ---------- Backup ---------- */
 
+// Settings whose key starts with "local." belong to this device only (for example the
+// GitHub token). They are never written into a backup and are kept when restoring.
+const isLocalKey = (k) => String(k).startsWith('local.');
+
 export async function exportAll() {
   const db = await openDB();
   const out = { app: 'tindahan', version: DB_VERSION, exportedAt: new Date().toISOString() };
   for (const name of ['products', 'sales', 'restocks', 'settings']) {
     out[name] = await wrap(db.transaction(name).objectStore(name).getAll());
   }
+  out.settings = out.settings.filter((row) => !isLocalKey(row.key));
+  out.summary = { items: out.products.length, sales: out.sales.length };
   return out;
 }
 
@@ -210,11 +216,17 @@ export async function importAll(data) {
   if (!data || data.app !== 'tindahan') throw new Error('This file is not a Tindahan backup.');
   const db = await openDB();
   const names = ['products', 'sales', 'restocks', 'settings'];
+  const keep = (await wrap(db.transaction('settings').objectStore('settings').getAll()))
+    .filter((row) => isLocalKey(row.key));
   const tx = db.transaction(names, 'readwrite');
   for (const name of names) {
     const s = tx.objectStore(name);
     s.clear();
-    for (const row of data[name] || []) s.put(row);
+    for (const row of data[name] || []) {
+      if (name === 'settings' && isLocalKey(row.key)) continue;
+      s.put(row);
+    }
   }
+  for (const row of keep) tx.objectStore('settings').put(row);
   return done(tx);
 }

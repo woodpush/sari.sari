@@ -1,7 +1,8 @@
 // app.js — Tindahan: inventory, sales and profit for a sari-sari store.
 import * as db from './db.js';
+import * as cloud from './cloud.js';
 
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.2.0';
 const $ = (id) => document.getElementById(id);
 
 /* ---------- Helpers ---------- */
@@ -91,7 +92,7 @@ function showView(name) {
   if (name === 'items') renderItems();
   if (name === 'restock') renderRestockLog();
   if (name === 'reports') renderReports();
-  if (name === 'more') fillSettings();
+  if (name === 'more') { fillSettings(); fillCloudForm(); }
   const focusable = { sell: 'sellScan', restock: 'restockScan' }[name];
   if (focusable && matchMedia('(pointer: fine)').matches) $(focusable).focus();
 }
@@ -265,6 +266,7 @@ $('itemForm').addEventListener('submit', async (e) => {
     const id = await db.saveProduct(product);
     await refreshProducts();
     $('itemDialog').close();
+    markChanged();
     toast(idVal ? 'Item saved' : 'Item added');
     renderItems();
     if (itemSavedCallback) itemSavedCallback(productById(id));
@@ -284,6 +286,7 @@ $('fDelete').addEventListener('click', async () => {
   cart = cart.filter((c) => c.productId !== id);
   await refreshProducts();
   $('itemDialog').close();
+  markChanged();
   toast('Item deleted');
   renderItems();
   renderCart();
@@ -414,6 +417,7 @@ $('completeSale').addEventListener('click', async () => {
     cart = [];
     $('cashIn').value = '';
     renderCart();
+    markChanged();
     toast(sale.change != null ? `Sale saved. Change ${peso(sale.change)}` : `Sale saved: ${peso(sale.total)}`);
     $('sellScan').focus();
   } catch (ex) {
@@ -516,6 +520,7 @@ $('restockForm').addEventListener('submit', async (e) => {
   if (buy == null || sell == null) return toast('Enter valid prices, for example 12.50', true);
   await db.recordRestock({ productId: restockProduct.id, qty, buyPrice: buy, sellPrice: sell });
   await refreshProducts();
+  markChanged();
   toast(`Added ${qty} × ${restockProduct.name}`);
   $('restockForm').hidden = true;
   restockProduct = null;
@@ -623,6 +628,7 @@ $('saleLog').addEventListener('click', async (e) => {
   if (!id || !confirm('Void this sale? Its items go back into stock and it is removed from reports.')) return;
   await db.voidSale(Number(id));
   await refreshProducts();
+  markChanged();
   toast('Sale voided');
   renderReports();
 });
@@ -641,6 +647,7 @@ $('settingsForm').addEventListener('submit', async (e) => {
   await db.setSetting('storeName', settings.storeName);
   await db.setSetting('lowStock', settings.lowStock);
   applySettings();
+  markChanged();
   toast('Settings saved');
 });
 
@@ -649,10 +656,58 @@ function applySettings() {
   document.title = settings.storeName;
 }
 
-$('exportJson').addEventListener('click', async () => {
+/* ---------- Backups: phone and cloud ---------- */
+
+const DAY = 86400000;
+let lastChange = 0;
+
+// Call after anything that changes the data, so auto-backup knows there is news.
+function markChanged() {
+  lastChange = Date.now();
+  db.setSetting('local.lastChange', lastChange);
+  maybeAutoBackup();
+}
+
+function ago(iso) {
+  if (!iso) return 'never';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60000) return 'just now';
+  if (ms < 3600000) return `${Math.round(ms / 60000)} min ago`;
+  if (ms < DAY) return `${Math.round(ms / 3600000)} h ago`;
+  const d = Math.round(ms / DAY);
+  return `${d} day${d > 1 ? 's' : ''} ago`;
+}
+
+async function backupFile() {
   const data = await db.exportAll();
-  download(`tindahan-backup-${stamp()}.json`, JSON.stringify(data, null, 1), 'application/json');
-  await db.setSetting('lastBackup', new Date().toISOString());
+  const name = `tindahan-backup-${stamp()}.json`;
+  return { name, text: JSON.stringify(data) };
+}
+
+async function afterLocalBackup() {
+  await db.setSetting('local.lastBackup', new Date().toISOString());
+  renderBackupStatus();
+}
+
+$('exportJson').addEventListener('click', async () => {
+  const { name, text } = await backupFile();
+  download(name, text, 'application/json');
+  await afterLocalBackup();
+});
+
+// Share sheet: lets the owner save the backup to Google Drive, email, Messenger, Files…
+if (navigator.canShare && navigator.canShare({ files: [new File(['x'], 't.json', { type: 'application/json' })] })) {
+  $('shareJson').hidden = false;
+}
+$('shareJson').addEventListener('click', async () => {
+  const { name, text } = await backupFile();
+  const file = new File([text], name, { type: 'application/json' });
+  try {
+    await navigator.share({ files: [file], title: name });
+    await afterLocalBackup();
+  } catch (ex) {
+    if (ex.name !== 'AbortError') toast('Could not share: ' + ex.message, true);
+  }
 });
 
 $('importJson').addEventListener('change', async (e) => {
@@ -661,16 +716,168 @@ $('importJson').addEventListener('change', async (e) => {
   if (!file) return;
   if (!confirm('Restoring replaces ALL current items, sales and restocks with the backup. Continue?')) return;
   try {
-    await db.importAll(JSON.parse(await file.text()));
-    await loadSettings();
-    await refreshProducts();
-    cart = [];
-    renderCart();
-    toast('Backup restored');
+    await restoreData(JSON.parse(await file.text()));
   } catch (ex) {
     toast(ex.message || 'Could not read that file', true);
   }
 });
+
+async function restoreData(data) {
+  await db.importAll(data);
+  await loadSettings();
+  await refreshProducts();
+  cart = [];
+  renderCart();
+  renderItems();
+  toast('Backup restored');
+}
+
+/* Cloud (GitHub) */
+
+async function cloudConfig() {
+  return {
+    repo: await db.getSetting('local.ghRepo', ''),
+    token: await db.getSetting('local.ghToken', ''),
+    every: Number(await db.getSetting('local.ghEvery', 60)),
+  };
+}
+
+let cloudBusy = false;
+
+async function runCloudBackup({ silent = false } = {}) {
+  const cfg = await cloudConfig();
+  if (!cfg.repo || !cfg.token) {
+    if (!silent) toast('Set up the repository and token first', true);
+    return false;
+  }
+  if (cloudBusy) return false;
+  cloudBusy = true;
+  setCloudStatus('Backing up…');
+  try {
+    const data = await db.exportAll();
+    await cloud.backup(cfg, data);
+    await db.setSetting('local.lastCloud', new Date().toISOString());
+    await db.setSetting('local.cloudError', '');
+    if (!silent) toast('Backed up to GitHub');
+    return true;
+  } catch (ex) {
+    await db.setSetting('local.cloudError', ex.message);
+    if (!silent) toast(ex.message, true);
+    return false;
+  } finally {
+    cloudBusy = false;
+    renderBackupStatus();
+  }
+}
+
+async function maybeAutoBackup() {
+  const cfg = await cloudConfig();
+  if (!cfg.repo || !cfg.token || !cfg.every || !navigator.onLine) return;
+  const last = await db.getSetting('local.lastCloud', null);
+  const lastMs = last ? new Date(last).getTime() : 0;
+  if (lastChange <= lastMs) return; // nothing new since the last backup
+  if (Date.now() - lastMs < cfg.every * 60000) return;
+  runCloudBackup({ silent: true });
+}
+
+function setCloudStatus(text, isError = false) {
+  const el = $('cloudStatus');
+  el.textContent = text;
+  el.classList.toggle('neg', isError);
+}
+
+async function renderBackupStatus() {
+  const cfg = await cloudConfig();
+  const lastLocal = await db.getSetting('local.lastBackup', null);
+  const lastCloud = await db.getSetting('local.lastCloud', null);
+  const err = await db.getSetting('local.cloudError', '');
+  $('localStatus').textContent = `Last saved to phone: ${ago(lastLocal)}`;
+  if (!cfg.repo || !cfg.token) setCloudStatus('Not set up yet.');
+  else if (err) setCloudStatus(`Last attempt failed: ${err}`, true);
+  else setCloudStatus(`Last cloud backup: ${ago(lastCloud)}`);
+
+  // Reminder on the Sell screen when no backup is recent.
+  const newest = Math.max(lastLocal ? new Date(lastLocal).getTime() : 0, lastCloud ? new Date(lastCloud).getTime() : 0);
+  const stale = products.length > 0 && Date.now() - newest > 3 * DAY;
+  const banner = $('backupBanner');
+  banner.hidden = !stale && !(cfg.repo && err && products.length);
+  banner.textContent = err && cfg.repo
+    ? 'Cloud backup is failing. Tap to check.'
+    : `No backup ${newest ? 'for ' + ago(new Date(newest).toISOString()).replace(' ago', '') : 'yet'}. Tap to back up.`;
+}
+$('backupBanner').addEventListener('click', () => showView('more'));
+
+async function fillCloudForm() {
+  const cfg = await cloudConfig();
+  $('ghRepo').value = cfg.repo;
+  $('ghToken').value = cfg.token;
+  $('ghEvery').value = String(cfg.every);
+  renderBackupStatus();
+}
+
+$('cloudForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const repo = cloud.parseRepo($('ghRepo').value);
+  const token = $('ghToken').value.trim();
+  if (!repo) { setCloudStatus('Enter the repository as owner/name, for example woodpush/sari-sari-backup.', true); return; }
+  if (!token) { setCloudStatus('Paste your GitHub access token.', true); return; }
+  setCloudStatus('Checking…');
+  try {
+    const info = await cloud.testConnection({ repo, token });
+    await db.setSetting('local.ghRepo', repo);
+    await db.setSetting('local.ghToken', token);
+    await db.setSetting('local.ghEvery', Number($('ghEvery').value));
+    await db.setSetting('local.cloudError', '');
+    $('ghRepo').value = repo;
+    setCloudStatus(`Connected to ${info.name} (private). Making the first backup…`);
+    await runCloudBackup();
+  } catch (ex) {
+    setCloudStatus(ex.message, true);
+  }
+});
+
+$('ghEvery').addEventListener('change', async () => {
+  if (await db.getSetting('local.ghRepo', '')) {
+    await db.setSetting('local.ghEvery', Number($('ghEvery').value));
+    toast('Auto backup updated');
+  }
+});
+
+$('cloudNow').addEventListener('click', () => runCloudBackup());
+
+$('cloudRestore').addEventListener('click', async () => {
+  const cfg = await cloudConfig();
+  if (!cfg.repo || !cfg.token) { toast('Set up the repository and token first', true); return; }
+  const list = $('restoreList');
+  list.innerHTML = '<li class="empty">Loading backups…</li>';
+  $('restoreDialog').showModal();
+  try {
+    const files = (await cloud.listBackups(cfg)).slice(0, 40);
+    list.innerHTML = files.length ? files.map((f) => `
+      <li><span class="r-main"><span class="r-name">${f.name === 'latest' ? 'Latest backup' : esc(f.name)}</span>
+        <span class="r-meta">${Math.max(1, Math.round(f.size / 1024))} KB</span></span>
+        <button type="button" class="btn small" data-path="${esc(f.path)}">Restore</button></li>`).join('')
+      : '<li class="empty">No backups in this repository yet.</li>';
+  } catch (ex) {
+    list.innerHTML = `<li class="empty neg">${esc(ex.message)}</li>`;
+  }
+});
+$('restoreList').addEventListener('click', async (e) => {
+  const path = e.target.dataset.path;
+  if (!path) return;
+  if (!confirm('Replace ALL data on this phone with this backup?')) return;
+  try {
+    const cfg = await cloudConfig();
+    await restoreData(await cloud.download(cfg, path));
+    $('restoreDialog').close();
+  } catch (ex) {
+    toast(ex.message, true);
+  }
+});
+$('restoreClose').addEventListener('click', () => $('restoreDialog').close());
+
+window.addEventListener('online', maybeAutoBackup);
+setInterval(maybeAutoBackup, 5 * 60000);
 
 function csvCell(v) {
   const s = String(v ?? '');
@@ -751,6 +958,7 @@ $('importCsv').addEventListener('change', async (e) => {
   }
   await refreshProducts();
   renderItems();
+  markChanged();
   toast(`${added} added, ${updated} updated${skipped ? `, ${skipped} skipped` : ''}`);
 });
 
@@ -768,8 +976,11 @@ async function init() {
   await db.openDB();
   await loadSettings();
   await refreshProducts();
+  lastChange = Number(await db.getSetting('local.lastChange', 0));
   renderCart();
   showView('sell');
+  renderBackupStatus();
+  maybeAutoBackup();
   if (navigator.storage?.persist) navigator.storage.persist(); // ask the browser not to clear our data
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 }

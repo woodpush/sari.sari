@@ -1,7 +1,7 @@
 // sw.js — keeps the app working with no internet. Bump CACHE when you change files.
-const CACHE = 'tindahan-v0.1.0';
+const CACHE = 'tindahan-v0.2.0';
 const FILES = [
-  './', 'index.html', 'css/styles.css', 'js/app.js', 'js/db.js',
+  './', 'index.html', 'css/styles.css', 'js/app.js', 'js/db.js', 'js/cloud.js',
   'vendor/html5-qrcode.min.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
