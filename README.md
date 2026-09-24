@@ -9,7 +9,7 @@ A simple point-of-sale and inventory app for a sari-sari store. Scan barcodes, s
 - **Items without barcodes** (eggs, ice, loose rice) – leave the barcode blank and the app assigns a code like `ITEM-0001`. Find them by typing the name.
 - **Restock** – record pieces bought and the new buy price. Stock goes up and the cost is logged.
 - **Reports** – sales, cost, gross profit, margin and restock spending for today, 7 days, this month or all time. Best earners, items running low, and the value of stock on hand. Void a sale entered by mistake.
-- **Backup** – download/restore a full JSON backup, export items and sales to CSV (opens in Excel or Google Sheets), and bulk-import items from CSV.
+- **Backup** – automatic cloud backup to a private GitHub repository with full version history, plus save/share a backup file on the phone. Export items and sales to CSV, and bulk-import items from CSV.
 
 Profit is calculated from the buy and sell price *at the moment of each sale*, so changing a price later does not rewrite past profit.
 
@@ -39,13 +39,31 @@ python3 -m http.server 8000
 
 Then open http://localhost:8000. (Opening `index.html` directly as a file will not work because the app uses JavaScript modules.)
 
-## Where is my data?
+## Where is my data, and how is it backed up?
 
-All data is stored **on the device, inside the browser** (IndexedDB). Nothing is sent to GitHub or any server. This means:
+The data is stored on the phone, inside the browser (IndexedDB). There are three layers of protection:
 
-- Each phone has its own separate data.
-- Clearing browser data or uninstalling the browser deletes it.
-- **Download a backup regularly** from *More → Download backup* and save it to Google Drive or send it to yourself.
+1. **Phone copy** – *More → Save backup to phone* saves a `.json` file to Downloads. *Share backup* sends it to Google Drive, email, Messenger or Files.
+2. **Cloud copy (GitHub)** – the app backs up automatically to a **private** GitHub repository (every 30 min to once a day, only when something changed). Files: `backups/latest.json` plus one `backups/YYYY-MM-DD.json` per day.
+3. **History** – every cloud backup is a Git commit. If a backup file is deleted or overwritten, open the backup repository on github.com, click **Commits** (or open the file and click **History**), pick an older version and download it. Nothing is truly gone unless the whole repository is deleted.
+
+### Set up cloud backup
+
+1. On github.com create a **new private repository**, e.g. `sari-sari-backup` (tick "Add a README file"). Keep it separate from the app repository, which is public.
+2. Create a token: profile picture → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
+   - Expiration: up to 1 year (set a calendar reminder to renew it)
+   - Repository access: **Only select repositories** → `sari-sari-backup`
+   - Permissions → Repository permissions → **Contents: Read and write**
+3. Copy the token (it starts with `github_pat_`). GitHub shows it only once.
+4. In the app: *More → Cloud backup*, enter `your-username/sari-sari-backup`, paste the token, choose how often, and tap **Save and test**. The first backup runs immediately.
+
+The token is kept only on that phone and is never written into backup files. The app refuses to back up to a public repository.
+
+### Restoring
+
+- **Same phone, data lost or wrong:** *More → Restore from cloud…* → pick *Latest* or a date.
+- **New or replacement phone:** open the app link, set up cloud backup with the same repository and token, then *Restore from cloud…*.
+- **From a file:** *More → Restore from a backup file*.
 
 ## Importing items from a spreadsheet
 
@@ -70,6 +88,7 @@ index.html              app layout
 css/styles.css          styles (light and dark)
 js/app.js               screens and logic
 js/db.js                local database (IndexedDB), money stored in centavos
+js/cloud.js             backup to a private GitHub repository
 sw.js                   offline support (bump CACHE when you release changes)
 manifest.webmanifest    install-to-home-screen settings
 vendor/html5-qrcode.min.js   camera barcode library (Apache-2.0)
